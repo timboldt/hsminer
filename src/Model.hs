@@ -19,6 +19,8 @@ data Tile = Dirt      -- Variable tile that is revealed by digging
           | Gems
           | Ladder
           | Air       -- Empty space
+          | Rope      -- Elevator rope (normally an implied entity)
+          | Elevator  -- Elevator body (normally an implied entity)
 
 data Mine = Mine { mMiner    :: Miner             -- Main character
                  , mElevator :: Coord             -- Position of the elevator
@@ -53,28 +55,39 @@ standardMine = Mine { mMiner = standardMiner
                     , mTiles = standardTiles 
                     , mMax = (standardMineMaxX, standardMineMaxY) }
 
+tileAtCoord :: Coord -> Mine -> Tile
+tileAtCoord (x, y) mine
+  | x == elevatorX = if y == 0              then Bedrock
+                     else if y < elevatorY  then Rope
+                     else if y == elevatorY then Elevator
+                     else if y < maxY       then Air
+                     else                        Bedrock
+  | otherwise = case M.lookup (x, y) (mTiles mine) of
+      Just tile  -> tile
+      Nothing -> if y <= standardGrassYLocation then Air else Dirt
+  where elevatorX = fst (mElevator mine)
+        elevatorY = snd (mElevator mine)
+        maxY = snd (mMax mine)
+
 -- Move this to "View" instead of "Model"
 coordToChar :: Coord -> Mine -> Char
 coordToChar coord mine 
   | coord == mLocation (mMiner mine) = '*'
-  | coord == elevatorCoord           = '_'
-  | fst coord == fst elevatorCoord && snd coord < snd elevatorCoord && snd coord > 0 = '|'
-  | fst coord == fst elevatorCoord && snd coord > snd elevatorCoord && snd coord < snd (mMax mine) = ' '
-  | otherwise = case M.lookup coord (mTiles mine) of
-      Just Dirt       -> '#'
-      Just Sandstone  -> '1'
-      Just Limestone  -> '2'
-      Just Granite    -> '3'
-      Just Bedrock    -> '='
-      Just Grass      -> '>'
-      Just Water      -> '~'
-      Just Silver     -> 'S'
-      Just Gold       -> 'G'
-      Just Platinum   -> 'P'
-      Just Gems       -> '^'
-      Just Ladder     -> 'H'
-      Just Air        -> ' '
-      Nothing         -> if snd coord <= standardGrassYLocation then ' ' else '#'
-  where elevatorCoord = mElevator mine
+  | otherwise = case tileAtCoord coord mine of
+        Rope       -> '|'
+        Elevator   -> '_'
+        Dirt       -> '#'
+        Sandstone  -> '1'
+        Limestone  -> '2'
+        Granite    -> '3'
+        Bedrock    -> '='
+        Grass      -> '>'
+        Water      -> '~'
+        Silver     -> 'S'
+        Gold       -> 'G'
+        Platinum   -> 'P'
+        Gems       -> '^'
+        Ladder     -> 'H'
+        Air        -> ' '
 
 p = [[coordToChar (x, y) standardMine | x <- [0..standardMineMaxX]] | y <- [0..standardMineMaxY]]
