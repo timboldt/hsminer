@@ -75,6 +75,7 @@ data Direction = Upward
                | Downward
                | Leftward
                | Rightward
+               | Stationary
                deriving Eq
 
 isFalling :: Mine -> Bool
@@ -85,51 +86,76 @@ isFalling mine =
 isInElevator :: Mine -> Bool
 isInElevator mine = mLocation (mMiner mine) == mElevator mine
 
---targetIsDirt :: Coord -> Mine -> Bool
---targetisDirt coord mine = (tileAtCoord coord mine) == Dirt
+minerTile :: Mine -> Tile
+minerTile mine = tileAtCoord (mLocation (mMiner mine)) mine
+
+destinationCoord :: Mine -> Direction -> Coord
+destinationCoord mine direction = shiftCoord (mLocation (mMiner mine)) direction
+
+destinationTile :: Mine -> Direction -> Tile
+destinationTile mine direction = tileAtCoord (destinationCoord mine direction) mine
 
 shiftCoord :: Coord -> Direction -> Coord
 shiftCoord (x, y) direction = case direction of
-                              Upward    -> (x, y - 1)
-                              Downward  -> (x, y + 1)
-                              Leftward  -> (x - 1, y)
-                              Rightward -> (x + 1, y) 
+                              Upward     -> (x, y - 1)
+                              Downward   -> (x, y + 1)
+                              Leftward   -> (x - 1, y)
+                              Rightward  -> (x + 1, y)
+                              Stationary -> (x, y)
+
+moveMiner :: Miner -> Direction -> Miner
+moveMiner old direction = Miner { mLocation    = shiftCoord (mLocation old) direction 
+                                , mEnergy      = mEnergy old
+                                , mMoneyInBank = mMoneyInBank old
+                                , mCash        = mCash old } 
 
 walk :: Mine -> Direction -> Mine
-walk old direction = Mine { mMiner = Miner { mLocation    = shiftCoord (mLocation (mMiner old)) direction 
-                                           , mEnergy      = mEnergy (mMiner old)
-                                           , mMoneyInBank = mMoneyInBank (mMiner old)
-                                           , mCash        = mCash (mMiner old) } 
+walk old direction = Mine { mMiner    = moveMiner (mMiner old) direction
                           , mElevator = mElevator old
                           , mTiles    = mTiles old
                           , mMax      = mMax old }
 
+digDirt :: Mine -> Direction -> Mine
+digDirt old direction 
+  | (direction == Upward && minerTile old /= Ladder)
+              = Mine { mMiner    = mMiner old
+                     , mElevator = mElevator old
+                     , mTiles    = M.insert (destinationCoord old direction) Air (mTiles old)
+                     , mMax      = mMax old }
+  | otherwise = Mine { mMiner    = moveMiner (mMiner old) direction
+                     , mElevator = mElevator old
+                     , mTiles    = M.insert (destinationCoord old direction) Air (mTiles old)
+                     , mMax      = mMax old }
+
 rideElevator :: Mine -> Direction -> Mine
-rideElevator old direction = Mine { mMiner = Miner { mLocation    = shiftCoord (mLocation (mMiner old)) direction 
-                                                   , mEnergy      = mEnergy (mMiner old)
-                                                   , mMoneyInBank = mMoneyInBank (mMiner old)
-                                                   , mCash        = mCash (mMiner old) } 
-                                   , mElevator = shiftCoord (mElevator old) direction
-                                   , mTiles    = mTiles old
-                                   , mMax      = mMax old }
+rideElevator old direction = Mine { mMiner    = moveMiner (mMiner old) direction
+                                  , mElevator = shiftCoord (mElevator old) direction
+                                  , mTiles    = mTiles old
+                                  , mMax      = mMax old }
 
 fallDown :: Mine -> Mine
-fallDown old = Mine { mMiner = Miner { mLocation    = shiftCoord (mLocation (mMiner old)) Downward 
-                                     , mEnergy      = mEnergy (mMiner old)
-                                     , mMoneyInBank = mMoneyInBank (mMiner old)
-                                     , mCash        = mCash (mMiner old) } 
+fallDown old = Mine { mMiner    = moveMiner (mMiner old) Downward 
                     , mElevator = mElevator old
                     , mTiles    = mTiles old
                     , mMax      = mMax old }
 
-travel :: Direction -> Mine -> Mine
-travel direction old
+makeLadder :: Mine -> Direction -> Mine
+makeLadder old direction
+  | destinationTile old direction == Air && fst (destinationCoord old direction) /= fst (mElevator old)
+      = Mine { mMiner    = mMiner old
+             , mElevator = mElevator old
+             , mTiles    = M.insert (destinationCoord old direction) Ladder (mTiles old)
+             , mMax      = mMax old }
+  | otherwise = old
+
+travel :: Mine -> Direction -> Mine
+travel old direction
   | isFalling old = fallDown old
   | isInElevator old && movingVertically = rideElevator old direction
---  | targetIsDirt old = digDirt direction old
---  | isOnLadder old && movingVertically = climbLadder direction old
---  | targetIsAir old = walkForward direction old
-  | otherwise = walk old direction -- Cannot move that direction
+  | destinationTile old direction == Dirt = digDirt old direction
+  | (destinationTile old direction == Air || destinationTile old direction == Elevator) &&
+      (direction /= Upward || minerTile old == Ladder) = walk old direction
+  | otherwise = old -- Cannot move that direction
   where movingVertically = (direction == Upward || direction == Downward)
 
 -- Move this to "View" instead of "Model"
@@ -158,6 +184,10 @@ dumpMine mine = mapM_ print ([[coordToChar (x, y) mine | x <- [0..(fst (mMax min
 
 p0 = standardMine
 
-p1 = travel Rightward (travel Rightward p0)
+p1 = travel (travel p0 Rightward) Rightward
 
-p2 = travel Downward (travel Downward p1)
+p2 = travel (travel (travel (travel p1 Downward) Downward) Downward) Downward
+
+p3 = travel (travel (travel p2 Leftward) Leftward) Leftward
+
+p4 = travel (travel (travel (makeLadder p3 Stationary)  Upward) Leftward) Leftward
