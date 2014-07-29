@@ -1,5 +1,6 @@
 module Model where
 
+import System.Console.ANSI
 import qualified Data.Map as M
 
 -- x/y coordinate, where (0, 0) is top left corner
@@ -33,7 +34,7 @@ data Miner = Miner { mLocation :: Coord
                    , mMoneyInBank :: Int
                    , mCash :: Int }
 
-standardMineMaxX = 50
+standardMineMaxX = 20
 
 standardMineMaxY = 20
 
@@ -115,23 +116,35 @@ walk old direction = Mine { mMiner    = moveMiner (mMiner old) direction
                           , mTiles    = mTiles old
                           , mMax      = mMax old }
 
-digDirt :: Mine -> Direction -> Mine
-digDirt old direction 
-  | (direction == Upward && minerTile old /= Ladder)
+digDirt :: Mine -> Direction -> [Double] -> Mine
+digDirt old direction rs
+  | (direction == Upward && minerTile old /= Ladder) || newTile /= Air
               = Mine { mMiner    = mMiner old
                      , mElevator = mElevator old
-                     , mTiles    = M.insert (destinationCoord old direction) Air (mTiles old)
+                     , mTiles    = M.insert (destinationCoord old direction) newTile (mTiles old)
                      , mMax      = mMax old }
   | otherwise = Mine { mMiner    = moveMiner (mMiner old) direction
                      , mElevator = mElevator old
-                     , mTiles    = M.insert (destinationCoord old direction) Air (mTiles old)
+                     , mTiles    = M.insert (destinationCoord old direction) newTile (mTiles old)
                      , mMax      = mMax old }
+  where
+      df = 4 * (snd (mLocation (mMiner old))) `div` (snd (mMax old))
+      randTiles = (replicate (10 `div` df) Sandstone) ++ (replicate 5 Limestone) ++ (replicate (2 * df) Granite) ++ (replicate df Bedrock)
+               ++ (replicate (4 * df) Silver) ++ (replicate (3 * df) Gold) ++ (replicate (2 * df) Platinum) ++ (replicate df Gems)
+               ++ (replicate df Water) ++ (repeat Air)
+      r = floor ((head rs) * 100)
+      newTile = head (drop r randTiles)
 
 rideElevator :: Mine -> Direction -> Mine
-rideElevator old direction = Mine { mMiner    = moveMiner (mMiner old) direction
-                                  , mElevator = shiftCoord (mElevator old) direction
-                                  , mTiles    = mTiles old
-                                  , mMax      = mMax old }
+rideElevator old direction
+  | newY > 1 && newY < maxY = Mine { mMiner    = moveMiner (mMiner old) direction
+                                   , mElevator = shiftCoord (mElevator old) direction
+                                   , mTiles    = mTiles old
+                                   , mMax      = mMax old }
+  | otherwise = old
+  where
+    (newX, newY) = shiftCoord (mElevator old) direction
+    (maxX, maxY) = mMax old
 
 fallDown :: Mine -> Mine
 fallDown old = Mine { mMiner    = moveMiner (mMiner old) Downward 
@@ -147,16 +160,6 @@ makeLadder old direction
              , mTiles    = M.insert (destinationCoord old direction) Ladder (mTiles old)
              , mMax      = mMax old }
   | otherwise = old
-
-travel :: Mine -> Direction -> Mine
-travel old direction
-  | isFalling old = fallDown old
-  | isInElevator old && movingVertically = rideElevator old direction
-  | destinationTile old direction == Dirt = digDirt old direction
-  | (destinationTile old direction == Air || destinationTile old direction == Elevator) &&
-      (direction /= Upward || minerTile old == Ladder) = walk old direction
-  | otherwise = old -- Cannot move that direction
-  where movingVertically = (direction == Upward || direction == Downward)
 
 -- Move this to "View" instead of "Model"
 coordToChar :: Coord -> Mine -> Char
@@ -182,12 +185,37 @@ coordToChar coord mine
 dumpMine :: Mine -> IO () 
 dumpMine mine = mapM_ print ([[coordToChar (x, y) mine | x <- [0..(fst (mMax mine))]] | y <- [0..(snd (mMax mine))]])
 
-p0 = standardMine
+drawColorChar :: Char -> ColorIntensity -> Color -> ColorIntensity -> Color -> IO ()
+drawColorChar char fgIntensity fgColor bgIntensity bgColor = do
+  setSGR [ SetColor Foreground fgIntensity fgColor
+         , SetColor Background bgIntensity bgColor ]
+  putChar char
 
-p1 = travel (travel p0 Rightward) Rightward
+drawChar :: Char -> IO ()
+drawChar char = case char of
+  '*' -> drawColorChar '*'  Vivid White   Dull  Black 
+  '|' -> drawColorChar '|'  Dull  White   Dull  Black
+  '_' -> drawColorChar '_'  Dull  White   Dull  Black 
+  '#' -> drawColorChar '#'  Dull  Yellow  Dull  Yellow
+  '1' -> drawColorChar '#'  Vivid Yellow  Vivid Yellow
+  '2' -> drawColorChar '#'  Vivid Black   Vivid Black
+  '3' -> drawColorChar '#'  Dull  Red     Vivid Black
+  '=' -> drawColorChar '='  Dull  White   Dull  White
+  '>' -> drawColorChar '#'  Vivid Green   Dull  Green
+  '~' -> drawColorChar '~'  Vivid Blue    Dull  Blue
+  'S' -> drawColorChar '+'  Dull  White   Dull  Black
+  'G' -> drawColorChar '+'  Vivid Yellow  Dull  Black
+  'P' -> drawColorChar '+'  Vivid White   Dull  Black
+  '^' -> drawColorChar '+'  Vivid Red     Dull  Black
+  'H' -> drawColorChar 'H'  Dull  White   Dull  Black
+  ' ' -> drawColorChar ' '  Dull  Black   Dull  Black
+  _   -> drawColorChar char Dull  White   Dull  Black
 
-p2 = travel (travel (travel (travel p1 Downward) Downward) Downward) Downward
-
-p3 = travel (travel (travel p2 Leftward) Leftward) Leftward
-
-p4 = travel (travel (travel (makeLadder p3 Stationary)  Upward) Leftward) Leftward
+drawMine :: Mine -> IO ()
+drawMine mine = do
+  setCursorPosition 0 0
+  mapM_ drawChar (unlines chars)
+  setSGR [ Reset ]
+  where
+    (x', y') = mMax mine
+    chars    = ([[coordToChar (x, y) mine | x <- [0..x']] | y <- [0..y']])
