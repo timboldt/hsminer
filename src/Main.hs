@@ -21,12 +21,11 @@ data Input = MoveUp
            | MoveDown
            | MoveLeft
            | MoveRight
-           | LadderInPlace
-           | LadderUp
-           | LadderDown
-           | LadderLeft
-           | LadderRight
-           | DoNothing
+           | InPlace
+           | ForceUp
+           | ForceDown
+           | ForceLeft
+           | ForceRight
            | Exit
            deriving (Eq)
 
@@ -40,17 +39,21 @@ getInput = do
     's' -> return MoveDown
     'a' -> return MoveLeft
     'd' -> return MoveRight
-    ' ' -> return DoNothing
-    'l' -> return LadderInPlace
-    'W' -> return LadderUp
-    'S' -> return LadderDown
-    'A' -> return LadderLeft
-    'D' -> return LadderRight
+    ' ' -> return InPlace
+    'W' -> return ForceUp
+    'S' -> return ForceDown
+    'A' -> return ForceLeft
+    'D' -> return ForceRight
     _   -> getInput
 
-travel :: Mine -> Direction -> [Double] -> Mine
-travel old direction rands
+travel :: Mine -> Direction -> Bool -> [Double] -> Mine
+travel old direction force rands
   | isInElevator old && movingVertically = rideElevator old direction
+  | (destinationTile old direction == Air) && force = makeLadder old direction
+  | (destinationTile old direction == Sandstone || destinationTile old direction == Limestone || destinationTile old direction == Granite) &&
+      (direction /= Upward || minerTile old == Ladder) && force = drillRock old direction
+  | (destinationTile old direction == Silver || destinationTile old direction == Gold || destinationTile old direction == Platinum || destinationTile old direction == Gems) &&
+      (direction /= Upward || minerTile old == Ladder) = collectValuables old direction
   | destinationTile old direction == Dirt = digDirt old direction rands
   | (destinationTile old direction == Air || destinationTile old direction == Elevator || destinationTile old direction == Ladder) &&
       (direction /= Upward || minerTile old == Ladder) = walk old direction
@@ -63,17 +66,16 @@ gameLoop mine rands = do
   drawMine mine
   input <- if isFalling mine then return MoveDown else getInput
   case input of
-    Exit          -> handleExit
-    MoveUp        -> gameLoop (travel mine Upward rands) (tail rands)
-    MoveDown      -> gameLoop (travel mine Downward rands) (tail rands)
-    MoveLeft      -> gameLoop (travel mine Leftward rands) (tail rands)
-    MoveRight     -> gameLoop (travel mine Rightward rands) (tail rands)
-    LadderInPlace -> gameLoop (makeLadder mine Stationary) (tail rands)
-    LadderUp      -> gameLoop (makeLadder mine Upward) (tail rands)
-    LadderDown    -> gameLoop (makeLadder mine Downward) (tail rands)
-    LadderLeft    -> gameLoop (makeLadder mine Leftward) (tail rands)
-    LadderRight   -> gameLoop (makeLadder mine Rightward) (tail rands)
-    otherwise     -> gameLoop (mine) (tail rands)
+    Exit       -> handleExit
+    MoveUp     -> gameLoop (travel mine Upward     False rands) (tail rands)
+    MoveDown   -> gameLoop (travel mine Downward   False rands) (tail rands)
+    MoveLeft   -> gameLoop (travel mine Leftward   False rands) (tail rands)
+    MoveRight  -> gameLoop (travel mine Rightward  False rands) (tail rands)
+    InPlace    -> gameLoop (travel mine Stationary True  rands) (tail rands)
+    ForceUp    -> gameLoop (travel mine Upward     True  rands) (tail rands)
+    ForceDown  -> gameLoop (travel mine Downward   True  rands) (tail rands)
+    ForceLeft  -> gameLoop (travel mine Leftward   True  rands) (tail rands)
+    ForceRight -> gameLoop (travel mine Rightward  True  rands) (tail rands)
 
 handleExit = do
   clearScreen

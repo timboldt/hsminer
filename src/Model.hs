@@ -24,15 +24,13 @@ data Tile = Dirt      -- Variable tile that is revealed by digging
           | Elevator  -- Elevator body (normally an implied entity)
           deriving Eq
 
-data Mine = Mine { mMiner    :: Miner             -- Main character
-                 , mElevator :: Coord             -- Position of the elevator
-                 , mTiles    :: M.Map Coord Tile  -- Contents of tiles (or Dirt if not specified)
-                 , mMax      :: Coord }           -- Coordinates of bottom-rightmost tile
-
-data Miner = Miner { mLocation :: Coord
-                   , mEnergy :: Int
-                   , mMoneyInBank :: Int
-                   , mCash :: Int }
+data Mine = Mine { mMiner       :: Coord             -- Main character
+                 , mElevator    :: Coord             -- Position of the elevator
+                 , mTiles       :: M.Map Coord Tile  -- Contents of tiles (or Dirt if not specified)
+                 , mMax         :: Coord             -- Coordinates of bottom-rightmost tile
+                 , mEnergy      :: Int               -- Energy remaining
+                 , mMoneyInBank :: Int               -- Cash in the bank
+                 , mCash        :: Int }             -- Cash in hand
 
 standardMineMaxX = 20
 
@@ -42,20 +40,18 @@ standardElevatorXLocation = standardMineMaxX - 2
 
 standardGrassYLocation = 3
 
-standardMiner = Miner { mLocation = (standardElevatorXLocation - 2, standardGrassYLocation - 1)
-                      , mEnergy = 500
-                      , mMoneyInBank = 1000
-                      , mCash = 0 }
-
 standardTiles = M.fromList ( 
                     [((x, y), Bedrock) | x <- [0..standardMineMaxX], y <- [0, standardMineMaxY]]
                  ++ [((x, y), Bedrock) | x <- [0, standardMineMaxX], y <- [1..standardMineMaxY - 1]]
                  ++ [((x, standardGrassYLocation), Grass) | x <- [1..standardMineMaxX - 1], x /= standardElevatorXLocation])
 
-standardMine = Mine { mMiner = standardMiner
+standardMine = Mine { mMiner = (standardElevatorXLocation - 2, standardGrassYLocation - 1)
                     , mElevator = (standardElevatorXLocation, standardGrassYLocation - 1)
                     , mTiles = standardTiles 
-                    , mMax = (standardMineMaxX, standardMineMaxY) }
+                    , mMax = (standardMineMaxX, standardMineMaxY)
+                    , mEnergy = 500
+                    , mMoneyInBank = 1000
+                    , mCash = 0 }
 
 tileAtCoord :: Coord -> Mine -> Tile
 tileAtCoord (x, y) mine
@@ -82,16 +78,16 @@ data Direction = Upward
 isFalling :: Mine -> Bool
 isFalling mine =
   tileAtCoord (x, y) mine == Air && tileAtCoord (x, y + 1) mine == Air
-  where (x, y) = mLocation (mMiner mine)
+  where (x, y) = mMiner mine
 
 isInElevator :: Mine -> Bool
-isInElevator mine = mLocation (mMiner mine) == mElevator mine
+isInElevator mine = mMiner mine == mElevator mine
 
 minerTile :: Mine -> Tile
-minerTile mine = tileAtCoord (mLocation (mMiner mine)) mine
+minerTile mine = tileAtCoord (mMiner mine) mine
 
 destinationCoord :: Mine -> Direction -> Coord
-destinationCoord mine direction = shiftCoord (mLocation (mMiner mine)) direction
+destinationCoord mine direction = shiftCoord (mMiner mine) direction
 
 destinationTile :: Mine -> Direction -> Tile
 destinationTile mine direction = tileAtCoord (destinationCoord mine direction) mine
@@ -104,31 +100,70 @@ shiftCoord (x, y) direction = case direction of
                               Rightward  -> (x + 1, y)
                               Stationary -> (x, y)
 
-moveMiner :: Miner -> Direction -> Miner
-moveMiner old direction = Miner { mLocation    = shiftCoord (mLocation old) direction 
-                                , mEnergy      = mEnergy old
-                                , mMoneyInBank = mMoneyInBank old
-                                , mCash        = mCash old } 
-
 walk :: Mine -> Direction -> Mine
-walk old direction = Mine { mMiner    = moveMiner (mMiner old) direction
-                          , mElevator = mElevator old
-                          , mTiles    = mTiles old
-                          , mMax      = mMax old }
+walk old direction = Mine { mMiner       = shiftCoord (mMiner old) direction
+                          , mElevator    = mElevator old
+                          , mTiles       = mTiles old
+                          , mMax         = mMax old
+                          , mEnergy      = mEnergy old
+                          , mMoneyInBank = mMoneyInBank old
+                          , mCash        = mCash old } 
+
+collectValuables :: Mine -> Direction -> Mine
+collectValuables old direction
+  | value > 0 = Mine { mMiner       = shiftCoord (mMiner old) direction
+                     , mElevator    = mElevator old
+                     , mTiles       = M.insert (destinationCoord old direction) Air (mTiles old)
+                     , mMax         = mMax old
+                     , mEnergy      = mEnergy old
+                     , mMoneyInBank = mMoneyInBank old
+                     , mCash        = (mCash old) + value }
+  | otherwise = old
+  where
+    value = case destinationTile old direction of
+      Silver   -> 5
+      Gold     -> 10
+      Platinum -> 20
+      Gems     -> 50
+      _        -> 0
+ 
+drillRock :: Mine -> Direction -> Mine
+drillRock old direction
+  | cost > 0 && (mEnergy old > cost) =
+      Mine { mMiner       = shiftCoord (mMiner old) direction
+           , mElevator    = mElevator old
+           , mTiles       = M.insert (destinationCoord old direction) Air (mTiles old)
+           , mMax         = mMax old
+           , mEnergy      = (mEnergy old) - cost
+           , mMoneyInBank = mMoneyInBank old
+           , mCash        = mCash old }
+  | otherwise = old
+  where
+    cost = case destinationTile old direction of
+      Sandstone -> 5
+      Limestone -> 10
+      Granite   -> 20
+      _         -> 0
 
 digDirt :: Mine -> Direction -> [Double] -> Mine
 digDirt old direction rs
   | (direction == Upward && minerTile old /= Ladder) || newTile /= Air
-              = Mine { mMiner    = mMiner old
-                     , mElevator = mElevator old
-                     , mTiles    = M.insert (destinationCoord old direction) newTile (mTiles old)
-                     , mMax      = mMax old }
-  | otherwise = Mine { mMiner    = moveMiner (mMiner old) direction
-                     , mElevator = mElevator old
-                     , mTiles    = M.insert (destinationCoord old direction) newTile (mTiles old)
-                     , mMax      = mMax old }
+              = Mine { mMiner       = mMiner old
+                     , mElevator    = mElevator old
+                     , mTiles       = M.insert (destinationCoord old direction) newTile (mTiles old)
+                     , mMax         = mMax old
+                     , mEnergy      = mEnergy old
+                     , mMoneyInBank = mMoneyInBank old
+                     , mCash        = mCash old } 
+  | otherwise = Mine { mMiner       = shiftCoord (mMiner old) direction
+                     , mElevator    = mElevator old
+                     , mTiles       = M.insert (destinationCoord old direction) newTile (mTiles old)
+                     , mMax         = mMax old
+                     , mEnergy      = mEnergy old
+                     , mMoneyInBank = mMoneyInBank old
+                     , mCash        = mCash old } 
   where
-      df = 4 * (snd (mLocation (mMiner old))) `div` (snd (mMax old))
+      df = 4 * (snd (mMiner old)) `div` (snd (mMax old)) + 1
       randTiles = (replicate (10 `div` df) Sandstone) ++ (replicate 5 Limestone) ++ (replicate (2 * df) Granite) ++ (replicate df Bedrock)
                ++ (replicate (4 * df) Silver) ++ (replicate (3 * df) Gold) ++ (replicate (2 * df) Platinum) ++ (replicate df Gems)
                ++ (replicate df Water) ++ (repeat Air)
@@ -137,34 +172,43 @@ digDirt old direction rs
 
 rideElevator :: Mine -> Direction -> Mine
 rideElevator old direction
-  | newY > 1 && newY < maxY = Mine { mMiner    = moveMiner (mMiner old) direction
-                                   , mElevator = shiftCoord (mElevator old) direction
-                                   , mTiles    = mTiles old
-                                   , mMax      = mMax old }
+  | newY > 1 && newY < maxY = Mine { mMiner       = shiftCoord (mMiner old) direction
+                                   , mElevator    = shiftCoord (mElevator old) direction
+                                   , mTiles       = mTiles old
+                                   , mMax         = mMax old
+                                   , mEnergy      = mEnergy old
+                                   , mMoneyInBank = mMoneyInBank old
+                                   , mCash        = mCash old } 
   | otherwise = old
   where
     (newX, newY) = shiftCoord (mElevator old) direction
     (maxX, maxY) = mMax old
 
 fallDown :: Mine -> Mine
-fallDown old = Mine { mMiner    = moveMiner (mMiner old) Downward 
-                    , mElevator = mElevator old
-                    , mTiles    = mTiles old
-                    , mMax      = mMax old }
+fallDown old = Mine { mMiner       = shiftCoord (mMiner old) Downward 
+                    , mElevator    = mElevator old
+                    , mTiles       = mTiles old
+                    , mMax         = mMax old
+                    , mEnergy      = mEnergy old
+                    , mMoneyInBank = mMoneyInBank old
+                    , mCash        = mCash old } 
 
 makeLadder :: Mine -> Direction -> Mine
 makeLadder old direction
   | destinationTile old direction == Air && fst (destinationCoord old direction) /= fst (mElevator old)
-      = Mine { mMiner    = mMiner old
-             , mElevator = mElevator old
-             , mTiles    = M.insert (destinationCoord old direction) Ladder (mTiles old)
-             , mMax      = mMax old }
+      = Mine { mMiner       = mMiner old
+             , mElevator    = mElevator old
+             , mTiles       = M.insert (destinationCoord old direction) Ladder (mTiles old)
+             , mMax         = mMax old
+             , mEnergy      = mEnergy old
+             , mMoneyInBank = mMoneyInBank old
+             , mCash        = mCash old } 
   | otherwise = old
 
 -- Move this to "View" instead of "Model"
 coordToChar :: Coord -> Mine -> Char
 coordToChar coord mine 
-  | coord == mLocation (mMiner mine) = '*'
+  | coord == mMiner mine = '*'
   | otherwise = case tileAtCoord coord mine of
         Rope       -> '|'
         Elevator   -> '_'
@@ -198,9 +242,9 @@ drawChar char = case char of
   '_' -> drawColorChar '_'  Dull  White   Dull  Black 
   '#' -> drawColorChar '#'  Dull  Yellow  Dull  Yellow
   '1' -> drawColorChar '#'  Vivid Yellow  Vivid Yellow
-  '2' -> drawColorChar '#'  Vivid Black   Vivid Black
+  '2' -> drawColorChar '='  Vivid Black   Dull  White
   '3' -> drawColorChar '#'  Dull  Red     Vivid Black
-  '=' -> drawColorChar '='  Dull  White   Dull  White
+  '=' -> drawColorChar '#'  Vivid Black   Vivid Black
   '>' -> drawColorChar '#'  Vivid Green   Dull  Green
   '~' -> drawColorChar '~'  Vivid Blue    Dull  Blue
   'S' -> drawColorChar '+'  Dull  White   Dull  Black
