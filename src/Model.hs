@@ -32,7 +32,7 @@ data Mine = Mine { mMiner       :: Coord             -- Main character
                  , mMoneyInBank :: Int               -- Cash in the bank
                  , mCash        :: Int }             -- Cash in hand
 
-standardMineMaxX = 20
+standardMineMaxX = 50
 
 standardMineMaxY = 20
 
@@ -259,6 +259,9 @@ drawMine :: Mine -> IO ()
 drawMine mine = do
   setCursorPosition 0 0
   mapM_ drawChar (unlines chars)
+  setSGR [ SetColor Foreground Vivid Green
+         , SetColor Background Vivid Black ]
+  print [ (mCash mine), (mMoneyInBank mine), (mEnergy mine) ]
   setSGR [ Reset ]
   where
     (x', y') = mMax mine
